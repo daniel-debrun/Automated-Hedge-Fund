@@ -2,12 +2,12 @@ import os
 from langchain_anthropic import ChatAnthropic
 from langchain_deepseek import ChatDeepSeek
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_mistralai import ChatMistralAI
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 from enum import Enum
 from pydantic import BaseModel
 from typing import Tuple
-
 
 class ModelProvider(str, Enum):
     """Enum for supported LLM providers"""
@@ -16,6 +16,7 @@ class ModelProvider(str, Enum):
     GEMINI = "Gemini"
     GROQ = "Groq"
     OPENAI = "OpenAI"
+    MISTRAL= "Mistral"
 
 
 
@@ -104,6 +105,11 @@ AVAILABLE_MODELS = [
         model_name="o3-mini",
         provider=ModelProvider.OPENAI
     ),
+    LLMModel(
+        display_name="[Mistral] mistral-large-latest",
+        model_name="mistral-large-latest",
+        provider=ModelProvider.MISTRAL
+    ),
 ]
 
 # Create LLM_ORDER in the format expected by the UI
@@ -147,3 +153,9 @@ def get_model(model_name: str, model_provider: ModelProvider) -> ChatOpenAI | Ch
             print(f"API Key Error: Please make sure GOOGLE_API_KEY is set in your .env file.")
             raise ValueError("Google API key not found.  Please make sure GOOGLE_API_KEY is set in your .env file.")
         return ChatGoogleGenerativeAI(model=model_name, api_key=api_key)
+    elif model_provider == ModelProvider.MISTRAL:
+        api_key = os.getenv("MISTRAL_API_KEY")
+        if not api_key:
+            print(f"API Key Error: Please make sure MISTRAL_API_KEY is set in your .env file.")
+            raise ValueError("Mistral API key not found.  Please make sure MISTRAL_API_KEY is set in your .env file.")
+        return ChatMistralAI(model=model_name, api_key=api_key)
