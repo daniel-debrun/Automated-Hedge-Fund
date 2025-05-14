@@ -62,6 +62,9 @@ def technical_analyst_agent(state: AgentState):
         progress.update_status("technical_analyst_agent", ticker, "Statistical analysis")
         stat_arb_signals = calculate_stat_arb_signals(prices_df)
 
+        
+        
+
         # Combine all signals using a weighted ensemble approach
         strategy_weights = {
             "trend": 0.25,
@@ -507,3 +510,41 @@ def calculate_hurst_exponent(price_series: pd.Series, max_lag: int = 20) -> floa
     except (ValueError, RuntimeWarning):
         # Return 0.5 (random walk) if calculation fails
         return 0.5
+
+def calculate_golden_cross_signal(prices_df: pd.DataFrame) -> dict:
+        """
+        Calculate Golden Cross signal based on moving averages.
+
+        Args:
+            prices_df: DataFrame with price data.
+
+        Returns:
+            dict: Signal, confidence, and metrics.
+        """
+        # Define the windows for the short-term and long-term moving averages
+        short_window = 50
+        long_window = 200
+
+        # Calculate the short-term and long-term moving averages
+        short_ma = prices_df["close"].rolling(window=short_window).mean()
+        long_ma = prices_df["close"].rolling(window=long_window).mean()
+
+        # Check if a golden cross has occurred
+        if short_ma.iloc[-1] > long_ma.iloc[-1] and short_ma.iloc[-2] <= long_ma.iloc[-2]:
+            signal = "bullish"
+            confidence = 0.7  # High confidence for golden cross
+        elif short_ma.iloc[-1] < long_ma.iloc[-1] and short_ma.iloc[-2] >= long_ma.iloc[-2]:
+            signal = "bearish"  # Death cross
+            confidence = 0.7
+        else:
+            signal = "neutral"
+            confidence = 0.3
+
+        return {
+            "signal": signal,
+            "confidence": confidence,
+            "metrics": {
+                "short_ma": float(short_ma.iloc[-1]),
+                "long_ma": float(long_ma.iloc[-1]),
+            },
+        }

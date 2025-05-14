@@ -103,57 +103,25 @@ def generate_trading_decision(
         [
             (
               "system",
-              """You are a portfolio manager making final trading decisions based on multiple tickers.
-
-              Trading Rules:
-              - For long positions:
-                * Only buy if you have available cash
-                * Only sell if you currently hold long shares of that ticker
-                * Sell quantity must be ≤ current long position shares
-                * Buy quantity must be ≤ max_shares for that ticker
+              """You are a portfolio manager making final trading decisions for multiple tickers.
+              Strictly follow trading rules (cash, shares, margin).
+              Consider long/short opportunities and risk.
               
-              - For short positions:
-                * Only short if you have available margin (50% of position value required)
-                * Only cover if you currently have short shares of that ticker
-                * Cover quantity must be ≤ current short position shares
-                * Short quantity must respect margin requirements
-              
-              - The max_shares values are pre-calculated to respect position limits
-              - Consider both long and short opportunities based on signals
-              - Maintain appropriate risk management with both long and short exposure
+              Available Actions: buy, sell, short, cover, hold.
 
-              Available Actions:
-              - "buy": Open or add to long position
-              - "sell": Close or reduce long position
-              - "short": Open or add to short position
-              - "cover": Close or reduce short position
-              - "hold": No action
-
-              Inputs:
-              - signals_by_ticker: dictionary of ticker → signals
-              - max_shares: maximum shares allowed per ticker
-              - portfolio_cash: current cash in portfolio
-              - portfolio_positions: current positions (both long and short)
-              - current_prices: current prices for each ticker
-              - margin_requirement: current margin requirement for short positions
+              Inputs: signals_by_ticker, max_shares, portfolio_cash, portfolio_positions, current_prices, margin_requirement.
               """,
             ),
             (
               "human",
-              """Based on the team's analysis, make your trading decisions for each ticker.
+              """Based on signals, make trading decisions for each ticker.
 
-              Here are the signals by ticker:
-              {signals_by_ticker}
-
-              Current Prices:
-              {current_prices}
-
-              Maximum Shares Allowed For Purchases:
-              {max_shares}
-
-              Portfolio Cash: {portfolio_cash}
-              Current Positions: {portfolio_positions}
-              Current Margin Requirement: {margin_requirement}
+              Signals: {signals_by_ticker}
+              Prices: {current_prices}
+              Max Shares: {max_shares}
+              Cash: {portfolio_cash}
+              Positions: {portfolio_positions}
+              Margin: {margin_requirement}
 
               Output strictly in JSON with the following structure:
               {{
