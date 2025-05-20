@@ -9,6 +9,7 @@ from agents.phil_fisher import phil_fisher_agent
 from agents.sentiment import sentiment_agent
 from agents.stanley_druckenmiller import stanley_druckenmiller_agent
 from agents.technicals import technical_analyst_agent
+from agents.forecast import forecasting_analyst_agent
 from agents.valuation import valuation_agent
 from agents.warren_buffett import warren_buffett_agent
 
@@ -69,6 +70,11 @@ ANALYST_CONFIG = {
         "agent_func": valuation_agent,
         "order": 10,
     },
+    "forecasting_analyst": {
+        "display_name": "Forecasting Analyst",
+        "agent_func": forecasting_analyst_agent,
+        "order": 11,
+    }
 }
 
 # Derive ANALYST_ORDER from ANALYST_CONFIG for backwards compatibility

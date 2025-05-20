@@ -329,7 +329,7 @@ class Backtester:
             self.portfolio_values = []
 
         for current_date in dates:
-            lookback_start = (current_date - timedelta(days=30)).strftime("%Y-%m-%d")
+            lookback_start = (current_date - timedelta(days=30)).strftime("%Y-%m-%d") # General lookback period = 30 days
             current_date_str = current_date.strftime("%Y-%m-%d")
             previous_date_str = (current_date - timedelta(days=1)).strftime("%Y-%m-%d")
 

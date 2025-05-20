@@ -3,6 +3,9 @@ import pandas as pd
 import requests
 
 from data.cache import get_cache
+from typing import Union, List
+import yfinance as yf
+
 from data.models import (
     CompanyNews,
     CompanyNewsResponse,
@@ -276,7 +279,29 @@ def prices_to_df(prices: list[Price]) -> pd.DataFrame:
     return df
 
 
-# Update the get_price_data function to use the new functions
-def get_price_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    prices = get_prices(ticker, start_date, end_date)
-    return prices_to_df(prices)
+# Overloaded get_price_data to accept single ticker or list of tickers
+def get_price_data(
+    tickers: Union[str, List[str]], 
+    start_date: str, 
+    end_date: str
+) -> Union[pd.DataFrame, dict[str, pd.DataFrame]]:
+    if isinstance(tickers, str):
+        prices = get_prices(tickers, start_date, end_date)
+        return prices_to_df(prices)
+    elif isinstance(tickers, list):
+        dfs = []
+        for ticker in  tickers:
+            prices_df = prices_to_df(get_prices(tickers, start_date, end_date))
+            if prices_df.empty:
+                return None  # Return None if any DataFrame is empty
+            # Add ticker as second level column
+            prices_df.columns = pd.MultiIndex.from_product([prices_df.columns, [ticker]], names=["Price", "Ticker"])
+            dfs.append(prices_df)
+
+        # Concatenate along columns and sort MultiIndex
+        result = pd.concat(dfs, axis=1)
+        result = result.sort_index(axis=1, level=["Price", "Ticker"])
+        return result
+    else:
+        raise ValueError("tickers must be a string or a list of strings")
+
