@@ -304,21 +304,168 @@ class Backtester:
         except Exception:
             print(f"Error parsing action: {agent_output}")
             return {"action": "hold", "quantity": 0}
+    
+    def step(self, current_date: str):
+        lookback_start = (current_date - timedelta(days=30)).strftime("%Y-%m-%d") # General lookback period = 30 days
+        current_date_str = current_date.strftime("%Y-%m-%d")
+        previous_date_str = (current_date - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    def run_backtest(self):
-        # Pre-fetch all data at the start
+        # Skip if there's no prior day to look back (i.e., first date in the range)
+        if lookback_start == current_date_str:
+            return
+
+        # Get current prices for all tickers
+        try:
+            current_prices = {
+                ticker: get_price_data(ticker, previous_date_str, current_date_str).iloc[-1]["close"]
+                for ticker in self.tickers
+            }
+        except Exception:
+            # If data is missing or there's an API error, skip this day
+            print(f"Error fetching prices between {previous_date_str} and {current_date_str}")
+            return
+
+        # ---------------------------------------------------------------
+        # 1) Execute the agent's trades
+        # ---------------------------------------------------------------
+        output = self.agent(
+            tickers=self.tickers,
+            start_date=lookback_start,
+            end_date=current_date_str,
+            portfolio=self.portfolio,
+            model_name=self.model_name,
+            model_provider=self.model_provider,
+            selected_analysts=self.selected_analysts,
+        )
+        decisions = output["decisions"]
+        analyst_signals = output["analyst_signals"]
+
+        # Execute trades for each ticker
+        executed_trades = {}
+        for ticker in self.tickers:
+            decision = decisions.get(ticker, {"action": "hold", "quantity": 0})
+            action, quantity = decision.get("action", "hold"), decision.get("quantity", 0)
+
+            executed_quantity = self.execute_trade(ticker, action, quantity, current_prices[ticker])
+            executed_trades[ticker] = executed_quantity
+
+        # ---------------------------------------------------------------
+        # 2) Now that trades have executed trades, recalculate the final
+        #    portfolio value for this day.
+        # ---------------------------------------------------------------
+        total_value = self.calculate_portfolio_value(current_prices)
+
+        # Also compute long/short exposures for final post‐trade state
+        long_exposure = sum(
+            self.portfolio["positions"][t]["long"] * current_prices[t]
+            for t in self.tickers
+        )
+        short_exposure = sum(
+            self.portfolio["positions"][t]["short"] * current_prices[t]
+            for t in self.tickers
+        )
+
+        # Calculate gross and net exposures
+        gross_exposure = long_exposure + short_exposure
+        net_exposure = long_exposure - short_exposure
+        long_short_ratio = (
+            long_exposure / short_exposure if short_exposure > 1e-9 else float('inf')
+        )
+
+        # Track each day's portfolio value in self.portfolio_values
+        self.portfolio_values.append({
+            "Date": current_date,
+            "Portfolio Value": total_value,
+            "Long Exposure": long_exposure,
+            "Short Exposure": short_exposure,
+            "Gross Exposure": gross_exposure,
+            "Net Exposure": net_exposure,
+            "Long/Short Ratio": long_short_ratio
+        })
+
+        # ---------------------------------------------------------------
+        # 3) Build the table rows to display
+        # ---------------------------------------------------------------
+        date_rows = []
+
+        # For each ticker, record signals/trades
+        for ticker in self.tickers:
+            ticker_signals = {}
+            for agent_name, signals in analyst_signals.items():
+                if ticker in signals:
+                    ticker_signals[agent_name] = signals[ticker]
+
+            bullish_count = len([s for s in ticker_signals.values() if s.get("signal", "").lower() == "bullish"])
+            bearish_count = len([s for s in ticker_signals.values() if s.get("signal", "").lower() == "bearish"])
+            neutral_count = len([s for s in ticker_signals.values() if s.get("signal", "").lower() == "neutral"])
+
+            # Calculate net position value
+            pos = self.portfolio["positions"][ticker]
+            long_val = pos["long"] * current_prices[ticker]
+            short_val = pos["short"] * current_prices[ticker]
+            net_position_value = long_val - short_val
+
+            # Get the action and quantity from the decisions
+            action = decisions.get(ticker, {}).get("action", "hold")
+            quantity = executed_trades.get(ticker, 0)
+            
+            # Append the agent action to the table rows
+            date_rows.append(
+                format_backtest_row(
+                    date=current_date_str,
+                    ticker=ticker,
+                    action=action,
+                    quantity=quantity,
+                    price=current_prices[ticker],
+                    shares_owned=pos["long"] - pos["short"],  # net shares
+                    position_value=net_position_value,
+                    bullish_count=bullish_count,
+                    bearish_count=bearish_count,
+                    neutral_count=neutral_count,
+                )
+            )
+        # ---------------------------------------------------------------
+        # 4) Calculate performance summary metrics
+        # ---------------------------------------------------------------
+        total_realized_gains = sum(
+            self.portfolio["realized_gains"][t]["long"] +
+            self.portfolio["realized_gains"][t]["short"]
+            for t in self.tickers
+        )
+
+        # Calculate cumulative return vs. initial capital
+        portfolio_return = ((total_value + total_realized_gains) / self.initial_capital - 1) * 100
+
+        # Add summary row for this day
+        date_rows.append(
+            format_backtest_row(
+                date=current_date_str,
+                ticker="",
+                action="",
+                quantity=0,
+                price=0,
+                shares_owned=0,
+                position_value=0,
+                bullish_count=0,
+                bearish_count=0,
+                neutral_count=0,
+                is_summary=True,
+                total_value=total_value,
+                return_pct=portfolio_return,
+                cash_balance=self.portfolio["cash"],
+                total_position_value=total_value - self.portfolio["cash"],
+                sharpe_ratio=performance_metrics["sharpe_ratio"],
+                sortino_ratio=performance_metrics["sortino_ratio"],
+                max_drawdown=performance_metrics["max_drawdown"],
+            ),
+        )
+        return date_rows
+    
+    def prepare_backtest(self):
+         # Pre-fetch all data at the start
         self.prefetch_data()
 
         dates = pd.date_range(self.start_date, self.end_date, freq="B")
-        table_rows = []
-        performance_metrics = {
-            'sharpe_ratio': None,
-            'sortino_ratio': None,
-            'max_drawdown': None,
-            'long_short_ratio': None,
-            'gross_exposure': None,
-            'net_exposure': None
-        }
 
         print("\nStarting backtest...")
 
@@ -328,167 +475,33 @@ class Backtester:
         else:
             self.portfolio_values = []
 
+        return dates
+
+
+    def run_backtest(self):
+
+        dates = self.prepare_backtest()
+
+        table_rows = []
+        performance_metrics = {
+            'sharpe_ratio': None,
+            'sortino_ratio': None,
+            'max_drawdown': None,
+            'long_short_ratio': None,
+            'gross_exposure': None,
+            'net_exposure': None
+        }
+       
+
         for current_date in dates:
-            lookback_start = (current_date - timedelta(days=30)).strftime("%Y-%m-%d") # General lookback period = 30 days
-            current_date_str = current_date.strftime("%Y-%m-%d")
-            previous_date_str = (current_date - timedelta(days=1)).strftime("%Y-%m-%d")
-
-            # Skip if there's no prior day to look back (i.e., first date in the range)
-            if lookback_start == current_date_str:
-                continue
-
-            # Get current prices for all tickers
-            try:
-                current_prices = {
-                    ticker: get_price_data(ticker, previous_date_str, current_date_str).iloc[-1]["close"]
-                    for ticker in self.tickers
-                }
-            except Exception:
-                # If data is missing or there's an API error, skip this day
-                print(f"Error fetching prices between {previous_date_str} and {current_date_str}")
-                continue
-
-            # ---------------------------------------------------------------
-            # 1) Execute the agent's trades
-            # ---------------------------------------------------------------
-            output = self.agent(
-                tickers=self.tickers,
-                start_date=lookback_start,
-                end_date=current_date_str,
-                portfolio=self.portfolio,
-                model_name=self.model_name,
-                model_provider=self.model_provider,
-                selected_analysts=self.selected_analysts,
-            )
-            decisions = output["decisions"]
-            analyst_signals = output["analyst_signals"]
-
-            # Execute trades for each ticker
-            executed_trades = {}
-            for ticker in self.tickers:
-                decision = decisions.get(ticker, {"action": "hold", "quantity": 0})
-                action, quantity = decision.get("action", "hold"), decision.get("quantity", 0)
-
-                executed_quantity = self.execute_trade(ticker, action, quantity, current_prices[ticker])
-                executed_trades[ticker] = executed_quantity
-
-            # ---------------------------------------------------------------
-            # 2) Now that trades have executed trades, recalculate the final
-            #    portfolio value for this day.
-            # ---------------------------------------------------------------
-            total_value = self.calculate_portfolio_value(current_prices)
-
-            # Also compute long/short exposures for final post‐trade state
-            long_exposure = sum(
-                self.portfolio["positions"][t]["long"] * current_prices[t]
-                for t in self.tickers
-            )
-            short_exposure = sum(
-                self.portfolio["positions"][t]["short"] * current_prices[t]
-                for t in self.tickers
-            )
-
-            # Calculate gross and net exposures
-            gross_exposure = long_exposure + short_exposure
-            net_exposure = long_exposure - short_exposure
-            long_short_ratio = (
-                long_exposure / short_exposure if short_exposure > 1e-9 else float('inf')
-            )
-
-            # Track each day's portfolio value in self.portfolio_values
-            self.portfolio_values.append({
-                "Date": current_date,
-                "Portfolio Value": total_value,
-                "Long Exposure": long_exposure,
-                "Short Exposure": short_exposure,
-                "Gross Exposure": gross_exposure,
-                "Net Exposure": net_exposure,
-                "Long/Short Ratio": long_short_ratio
-            })
-
-            # ---------------------------------------------------------------
-            # 3) Build the table rows to display
-            # ---------------------------------------------------------------
-            date_rows = []
-
-            # For each ticker, record signals/trades
-            for ticker in self.tickers:
-                ticker_signals = {}
-                for agent_name, signals in analyst_signals.items():
-                    if ticker in signals:
-                        ticker_signals[agent_name] = signals[ticker]
-
-                bullish_count = len([s for s in ticker_signals.values() if s.get("signal", "").lower() == "bullish"])
-                bearish_count = len([s for s in ticker_signals.values() if s.get("signal", "").lower() == "bearish"])
-                neutral_count = len([s for s in ticker_signals.values() if s.get("signal", "").lower() == "neutral"])
-
-                # Calculate net position value
-                pos = self.portfolio["positions"][ticker]
-                long_val = pos["long"] * current_prices[ticker]
-                short_val = pos["short"] * current_prices[ticker]
-                net_position_value = long_val - short_val
-
-                # Get the action and quantity from the decisions
-                action = decisions.get(ticker, {}).get("action", "hold")
-                quantity = executed_trades.get(ticker, 0)
-                
-                # Append the agent action to the table rows
-                date_rows.append(
-                    format_backtest_row(
-                        date=current_date_str,
-                        ticker=ticker,
-                        action=action,
-                        quantity=quantity,
-                        price=current_prices[ticker],
-                        shares_owned=pos["long"] - pos["short"],  # net shares
-                        position_value=net_position_value,
-                        bullish_count=bullish_count,
-                        bearish_count=bearish_count,
-                        neutral_count=neutral_count,
-                    )
-                )
-            # ---------------------------------------------------------------
-            # 4) Calculate performance summary metrics
-            # ---------------------------------------------------------------
-            total_realized_gains = sum(
-                self.portfolio["realized_gains"][t]["long"] +
-                self.portfolio["realized_gains"][t]["short"]
-                for t in self.tickers
-            )
-
-            # Calculate cumulative return vs. initial capital
-            portfolio_return = ((total_value + total_realized_gains) / self.initial_capital - 1) * 100
-
-            # Add summary row for this day
-            date_rows.append(
-                format_backtest_row(
-                    date=current_date_str,
-                    ticker="",
-                    action="",
-                    quantity=0,
-                    price=0,
-                    shares_owned=0,
-                    position_value=0,
-                    bullish_count=0,
-                    bearish_count=0,
-                    neutral_count=0,
-                    is_summary=True,
-                    total_value=total_value,
-                    return_pct=portfolio_return,
-                    cash_balance=self.portfolio["cash"],
-                    total_position_value=total_value - self.portfolio["cash"],
-                    sharpe_ratio=performance_metrics["sharpe_ratio"],
-                    sortino_ratio=performance_metrics["sortino_ratio"],
-                    max_drawdown=performance_metrics["max_drawdown"],
-                ),
-            )
-
+            date_rows = self.step(current_date)
             table_rows.extend(date_rows)
             print_backtest_results(table_rows)
 
             # Update performance metrics if we have enough data
             if len(self.portfolio_values) > 3:
                 self._update_performance_metrics(performance_metrics)
+                
 
         return performance_metrics
 
@@ -613,9 +626,7 @@ class Backtester:
 
         return performance_df
 
-
-### 4. Run the Backtest #####
-if __name__ == "__main__":
+def set_backtester():
     import argparse
 
     parser = argparse.ArgumentParser(description="Run backtesting simulation")
@@ -718,6 +729,13 @@ if __name__ == "__main__":
         selected_analysts=selected_analysts,
         initial_margin_requirement=args.margin_requirement,
     )
+
+    return backtester
+
+
+### 4. Run the Backtest #####
+if __name__ == "__main__":
+    backtester = set_backtester()
 
     performance_metrics = backtester.run_backtest()
     performance_df = backtester.analyze_performance()
