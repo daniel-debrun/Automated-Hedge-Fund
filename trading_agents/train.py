@@ -8,9 +8,29 @@ from datetime import datetime
 # Training template for TradingAgent
 
 def get_sec_filings(current_date, ticker):
-    company = Company(ticker)
-    filings = company.get_filings(form=['10-K', '10-Q'], filing_date=current_date, amendments=True)
-    # TODO: parse and format fillings per ticker
+    filings = get_filings(2021, 4).filter(form=['10-K', '10-Q'],
+                                    amendments=True,
+                                    ticker=ticker,
+                                    exchange='NASDAQ')
+    filings_list = []
+    for filing in filings:
+        filing_info = {
+            'accession_number': filing.accession_number,
+            'form': filing.form,
+            'filed': filing.filed,
+            'company': filing.company,
+            'ticker': filing.ticker,
+            'cik': filing.cik,
+            'url': filing.url,
+            'report_date': getattr(filing, 'report_date', None)
+        }
+        # Try to get the full text of the primary document
+        try:
+            filing_info['document_text'] = filing.document().text()
+        except Exception as e:
+            filing_info['document_text'] = None
+        filings_list.append(filing_info)
+    filings = filings_list
     return filings
 
 # Training and Inference for TradingAgent
